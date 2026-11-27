@@ -75,8 +75,15 @@ public class MainActivity extends Activity {
                 Uri u = req.getUrl();
                 if (!HOST.equals(u.getHost())) return null;
                 String raw = u.getEncodedPath() == null ? "/" : u.getEncodedPath();
+                String query = u.getEncodedQuery() == null ? "" : "?" + u.getEncodedQuery();
                 for (Map.Entry<String, String> r : RELAYS.entrySet()) {
-                    if (raw.startsWith(r.getKey() + "/")) return relay(r.getValue() + raw.substring(r.getKey().length()) + (u.getEncodedQuery() == null ? "" : "?" + u.getEncodedQuery()));
+                    if (raw.startsWith(r.getKey() + "/")) return relay(r.getValue() + raw.substring(r.getKey().length()) + query, 10_000);
+                }
+                // Alpaca (US stocks) needs the keys only the PC holds: ask the PC's server, when it is
+                // on this Wi-Fi. Away from it the answer fails fast and the pages fall back to Yahoo.
+                if (raw.startsWith("/proxy/alpaca-")) {
+                    String pc = getSharedPreferences("sync", MODE_PRIVATE).getString("server", null);
+                    return pc == null ? new WebResourceResponse("text/plain", "utf-8", 503, "No PC", null, null) : relay("http://" + pc + raw + query, 1500);
                 }
                 return asset(u.getPath() == null ? "/" : u.getPath());
             }
@@ -171,10 +178,10 @@ public class MainActivity extends Activity {
     }
 
     /** Fetch from the site a relay forwards to (no CORS there: the page asks its own origin). */
-    private static WebResourceResponse relay(String url) {
+    private static WebResourceResponse relay(String url, int connectTimeoutMs) {
         try {
             HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-            c.setConnectTimeout(10_000);
+            c.setConnectTimeout(connectTimeoutMs);
             c.setReadTimeout(20_000);
             c.setRequestProperty("User-Agent", DESKTOP_UA);
             int status = c.getResponseCode();

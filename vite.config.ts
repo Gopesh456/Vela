@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { velaUiSource } from './scripts/vela-ui-source.mjs';
 import { playgroundState } from './scripts/playground-state.mjs';
+import { alpacaRelays } from './scripts/alpaca-relays.mjs';
 
 /**
  * Playground server: `npm run playground` serves playground/ with Vela imported STRAIGHT
@@ -21,6 +22,7 @@ export default defineConfig({
             ...relay('/proxy/yahoo', 'https://query1.finance.yahoo.com'),
             ...relay('/proxy/nse', 'https://nsearchives.nseindia.com'),
             ...relay('/proxy/nasdaq', 'https://www.nasdaqtrader.com'),
+            ...alpacaRelays(), // US stock prices, when this PC has Alpaca keys
         },
     },
     // `vite build`: the pages, bundled for the Android app (scripts/build-android.ps1). es2022 for saved.ts's top-level await.
