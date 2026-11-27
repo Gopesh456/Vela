@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { velaUiSource } from './scripts/vela-ui-source.mjs';
+import { playgroundState } from './scripts/playground-state.mjs';
 
 /**
  * Playground server: `npm run playground` serves playground/ with Vela imported STRAIGHT
@@ -22,5 +23,6 @@ export default defineConfig({
             ...relay('/proxy/nasdaq', 'https://www.nasdaqtrader.com'),
         },
     },
-    plugins: [velaUiSource()],
+    // playgroundState: what the playground saves, kept in a file (outside `root`, so writing it reloads nothing).
+    plugins: [velaUiSource(), playgroundState(new URL('.playground-state.json', import.meta.url))],
 });

@@ -6,3 +6,5 @@ packages/vela-ui/registry/
 *.log
 .env.local
 .DS_Store
+.playground-state.json
+.playground-state.json.tmp

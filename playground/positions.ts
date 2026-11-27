@@ -1,10 +1,12 @@
 // Buy / Sell: record a trade made in another app and follow it on the chart — a dashed line
 // at the entry price, labelled with the live unrealised profit/loss (amount and percent).
-// Positions are saved per symbol in this browser's localStorage.
+// Positions are saved per symbol (saved.ts: a file the dev server keeps).
 //
 // Imported BEFORE the workspace is built: the renderer picks up layers when it mounts.
 import { registerRendererLayer, registerWidgetAction, type WidgetContext } from '../src/plugin';
 import { Dialog, createButton, createInput } from '../src/ui';
+import { toast } from '@luxalgo/vela-ui/toast';
+import { getSaved, setSaved } from './saved';
 import type { VelaWorkspace } from '../src/workspace';
 
 type Side = 'buy' | 'sell';
@@ -25,7 +27,7 @@ let shownSymbol = (): string | undefined => undefined;
 
 function load(): Position[] {
     try {
-        const raw: unknown = JSON.parse(localStorage.getItem(KEY) ?? '[]');
+        const raw: unknown = JSON.parse(getSaved(KEY) ?? '[]');
         if (!Array.isArray(raw)) return [];
         return raw.filter(
             (p: Partial<Position>) =>
@@ -35,7 +37,7 @@ function load(): Position[] {
         return [];
     }
 }
-const save = (): void => localStorage.setItem(KEY, JSON.stringify(positions));
+const save = (): void => setSaved(KEY, JSON.stringify(positions));
 
 /** Unrealised profit/loss at `price`: the amount, and the percent of the money put in. */
 export function pnl(p: Pick<Position, 'side' | 'price' | 'amount'>, price: number): { value: number; pct: number } {
@@ -53,6 +55,30 @@ export function bindPositions(ws: VelaWorkspace): void {
 const fmt = (n: number, digits = 2): string => n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const fmtPrice = (n: number): string => fmt(n, n < 1 ? 6 : 2);
 const signed = (n: number): string => (n >= 0 ? '+' : '') + fmt(n);
+const title = (p: Position): string => `${p.side.toUpperCase()} ${fmt(p.amount / p.price, 4)} @ ${fmtPrice(p.price)}`;
+
+/** Delete a position, with an Undo on the notice. */
+function removePosition(id: string): void {
+    const p = positions.find((x) => x.id === id);
+    if (!p) return;
+    positions = positions.filter((x) => x.id !== id);
+    save();
+    toast('Position removed', {
+        description: `${title(p)} · ${p.symbol}`,
+        duration: 8000, // time to reach Undo
+        action: {
+            label: 'Undo',
+            onClick: () => {
+                positions.push(p);
+                save();
+            },
+        },
+    });
+}
+
+/** The × on each chart label, in plot coordinates (CSS px), from the last frame. */
+let closeBoxes: { id: string; x: number; y: number; w: number; h: number }[] = [];
+const CLOSE_W = 20;
 
 registerRendererLayer({
     id: 'dev.positions',
@@ -60,16 +86,35 @@ registerRendererLayer({
     repaintOnCursor: true, // a new or removed position shows on the next pointer move, even with no live ticks
     create: () => {
         let canvas: HTMLCanvasElement | null = null;
+        let clicks: HTMLElement | null = null;
+        // A press on a label's × deletes that position. Caught on the way down, before the chart
+        // reads it as a pan or a drawing click (this canvas itself lets pointer events through).
+        const onPress = (e: PointerEvent): void => {
+            if (e.button !== 0 || !canvas) return;
+            const r = canvas.getBoundingClientRect();
+            const [x, y] = [e.clientX - r.left, e.clientY - r.top];
+            const hit = closeBoxes.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+            if (!hit) return;
+            e.stopPropagation();
+            e.preventDefault();
+            removePosition(hit.id);
+        };
         return {
             mount: (c) => {
                 canvas = c;
             },
-            render: ({ bars, coords, scale, bounds, theme }) => {
+            destroy: () => clicks?.removeEventListener('pointerdown', onPress, true),
+            render: ({ bars, coords, scale, bounds, theme, cursor }) => {
                 const g = canvas?.getContext('2d');
                 if (!canvas || !g) return;
+                if (!clicks && canvas.parentElement) {
+                    clicks = canvas.parentElement;
+                    clicks.addEventListener('pointerdown', onPress, true);
+                }
                 const dpr = coords.dpr;
                 g.setTransform(dpr, 0, 0, dpr, 0, 0);
                 g.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+                closeBoxes = [];
                 lastPrice = bars[bars.length - 1]?.close;
                 if (lastPrice === undefined) return;
                 g.font = `600 11px ${theme.fontFamily}`;
@@ -86,12 +131,27 @@ registerRendererLayer({
                     g.stroke();
                     g.setLineDash([]);
                     const r = pnl(p, lastPrice);
-                    const text = `${p.side.toUpperCase()} ${fmt(p.amount / p.price, 4)} @ ${fmtPrice(p.price)}   P&L ${signed(r.value)} (${signed(r.pct)}%)`;
+                    const text = `${title(p)}   P&L ${signed(r.value)} (${signed(r.pct)}%)`;
                     const ly = Math.min(Math.max(y, 11), coords.height - 11); // keep the label on screen when the entry is scrolled off
+                    const w = g.measureText(text).width + 14;
                     g.fillStyle = r.value >= 0 ? theme.upColor : theme.downColor;
-                    g.fillRect(8, ly - 10, g.measureText(text).width + 14, 20);
+                    g.fillRect(8, ly - 10, w + CLOSE_W, 20);
                     g.fillStyle = '#fff';
                     g.fillText(text, 15, ly);
+                    // The delete button: a darker cell at the label's end, darker still under the pointer.
+                    const box = { id: p.id, x: 8 + w, y: ly - 10, w: CLOSE_W, h: 20 };
+                    closeBoxes.push(box);
+                    const hover = cursor && cursor.x >= box.x && cursor.x <= box.x + box.w && cursor.y >= box.y && cursor.y <= box.y + box.h;
+                    g.fillStyle = hover ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.2)';
+                    g.fillRect(box.x, box.y, box.w, box.h);
+                    g.strokeStyle = '#fff';
+                    g.lineWidth = 1.5;
+                    g.beginPath();
+                    g.moveTo(box.x + 6.5, ly - 3.5);
+                    g.lineTo(box.x + 13.5, ly + 3.5);
+                    g.moveTo(box.x + 13.5, ly - 3.5);
+                    g.lineTo(box.x + 6.5, ly + 3.5);
+                    g.stroke();
                 }
             },
         };
@@ -150,15 +210,14 @@ function openTrade(ctx: WidgetContext, side: Side): void {
             const row = document.createElement('div');
             row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;';
             const r = lastPrice === undefined ? null : pnl(p, lastPrice);
-            row.textContent = `${p.side.toUpperCase()} ${fmt(p.amount / p.price, 4)} @ ${fmtPrice(p.price)} · invested ${fmt(p.amount)}${r ? ` · P&L ${signed(r.value)} (${signed(r.pct)}%)` : ''}`;
+            row.textContent = `${title(p)} · invested ${fmt(p.amount)}${r ? ` · P&L ${signed(r.value)} (${signed(r.pct)}%)` : ''}`;
             const remove = createButton({
                 icon: 'trash',
                 label: 'Remove this position',
                 variant: 'ghost',
                 size: 'icon-xs',
                 onClick: () => {
-                    positions = positions.filter((x) => x.id !== p.id);
-                    save();
+                    removePosition(p.id);
                     renderList();
                 },
             });

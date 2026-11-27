@@ -51,6 +51,22 @@ async function getText(url: string): Promise<string> {
     return res.text();
 }
 
+/** A symbol list, kept in the browser for a day: the list sites refuse callers that download
+ *  them on every page load. A failed download falls back to the last copy kept. */
+async function getList(url: string): Promise<string> {
+    const cache = await caches.open('vela-play-symbol-lists');
+    const kept = await cache.match(url);
+    if (kept && Date.now() - Number(kept.headers.get('x-saved-at')) < DAY) return kept.text();
+    try {
+        const text = await getText(url);
+        await cache.put(url, new Response(text, { headers: { 'x-saved-at': String(Date.now()) } }));
+        return text;
+    } catch (e) {
+        if (kept) return kept.text();
+        throw e;
+    }
+}
+
 const dayFormats = new Map<string, Intl.DateTimeFormat>();
 /** Days since 1970-01-01 on the market's own calendar. */
 function marketDay(t: number, timezone: string): number {
@@ -177,7 +193,7 @@ export const nseStocks = (): DataProvider =>
         timezone: 'Asia/Kolkata',
         session: '0915-1530',
         yahooTicker: (t) => `${t}.NS`,
-        list: async () => rows(await getText('/proxy/nse/content/equities/EQUITY_L.csv'), ',').map(([t, name]) => ({ ticker: t!, description: name, type: 'stock' })),
+        list: async () => rows(await getList('/proxy/nse/content/equities/EQUITY_L.csv'), ',').map(([t, name]) => ({ ticker: t!, description: name, type: 'stock' })),
     });
 
 const US_EXCHANGES: Record<string, string> = { N: 'NYSE', A: 'AMEX', P: 'NYSEARCA', Z: 'BATS', V: 'IEXG' };
@@ -190,7 +206,7 @@ export const usStocks = (): DataProvider =>
         session: '0930-1600',
         yahooTicker: (t) => t.replace(/\./g, '-'), // BRK.B is BRK-B on Yahoo
         list: async () => {
-            const [nasdaq, other] = await Promise.all([getText('/proxy/nasdaq/dynamic/SymDir/nasdaqlisted.txt'), getText('/proxy/nasdaq/dynamic/SymDir/otherlisted.txt')]);
+            const [nasdaq, other] = await Promise.all([getList('/proxy/nasdaq/dynamic/SymDir/nasdaqlisted.txt'), getList('/proxy/nasdaq/dynamic/SymDir/otherlisted.txt')]);
             const ok = (t: string | undefined, test: string | undefined): t is string => !!t && test !== 'Y' && !/[$ ]/.test(t); // no test issues or preferred shares
             return [
                 ...rows(nasdaq, '|').flatMap(([t, name, , test, , , etf]) => (ok(t, test) ? [{ ticker: t, description: name, type: etf === 'Y' ? 'fund' : 'stock', prefix: 'NASDAQ' }] : [])),
