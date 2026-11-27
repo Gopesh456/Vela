@@ -24,6 +24,29 @@ export function setSaved(key: string, value: string | null): void {
     void flush();
 }
 
+// Other open pages save to the same file: pick up their changes when this window gets focus
+// and every few seconds, so a list edited here starts from theirs instead of overwriting it.
+// shortcut: two pages editing the same list within the same few seconds can still lose one edit; a per-item server merge would close that.
+const listeners = new Map<string, Set<() => void>>();
+export function onSavedChange(key: string, cb: () => void): void {
+    if (!listeners.has(key)) listeners.set(key, new Set());
+    listeners.get(key)!.add(cb);
+}
+async function pull(): Promise<void> {
+    const fresh = await fetch('/__state')
+        .then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : null))
+        .catch(() => null);
+    if (!fresh) return;
+    for (const key of new Set([...Object.keys(fresh), ...Object.keys(state)])) {
+        if (pending.has(key) || fresh[key] === state[key]) continue; // our own unsent write wins
+        if (fresh[key] === undefined) delete state[key];
+        else state[key] = fresh[key];
+        listeners.get(key)?.forEach((cb) => cb());
+    }
+}
+addEventListener('focus', () => void pull());
+setInterval(() => void pull(), 5000);
+
 // Writes go out one at a time, in order; while the server is down they wait and retry.
 const pending = new Map<string, string | null>();
 let flushing = false;

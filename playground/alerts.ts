@@ -7,7 +7,7 @@ import { registerDrawingAction, registerSidePanel } from '../src/plugin';
 import { createButton } from '../src/ui';
 import type { VelaWorkspace } from '../src/workspace';
 import { toast } from '@luxalgo/vela-ui/toast';
-import { getSaved, setSaved } from './saved';
+import { getSaved, onSavedChange, setSaved } from './saved';
 import { CSS, fmtPrice } from './watchlist';
 
 /** `id` is the horizontal line's drawing id in chart cell `cell` of page `page` (each chart
@@ -27,6 +27,18 @@ const KEY = 'vela-play:alerts';
 const CHECK_MS = 5000;
 
 let alerts = load();
+// Another page changed the alerts: take its list, keeping each kept alert's last checked price.
+onSavedChange(KEY, () => {
+    const id = (a: Alert): string => `${a.page}|${a.cell}|${a.id}`;
+    const before = new Map(alerts.map((a) => [id(a), lastPrice.get(a)]));
+    alerts = load();
+    lastPrice.clear();
+    for (const a of alerts) {
+        const p = before.get(id(a));
+        if (p !== undefined) lastPrice.set(a, p);
+    }
+    notify();
+});
 function load(): Alert[] {
     try {
         const v: unknown = JSON.parse(getSaved(KEY) ?? '[]');

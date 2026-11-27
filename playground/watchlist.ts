@@ -3,13 +3,18 @@
 // + adds the chart's symbol; × removes a row. Saved with the rest (saved.ts).
 import { registerSidePanel, type WidgetContext } from '../src/plugin';
 import { createButton } from '../src/ui';
-import { getSaved, setSaved } from './saved';
+import { getSaved, onSavedChange, setSaved } from './saved';
 
 const KEY = 'vela-play:watchlist';
 const DEFAULTS = ['BTCUSDT', 'ETHUSDT', 'RELIANCE', 'NASDAQ:AAPL'];
 const REFRESH_MS = 15_000;
 
 let symbols = load();
+const changedElsewhere = new Set<() => void>();
+onSavedChange(KEY, () => {
+    symbols = load(); // another page changed the watchlist
+    changedElsewhere.forEach((cb) => cb());
+});
 function load(): string[] {
     try {
         const v: unknown = JSON.parse(getSaved(KEY) ?? 'null');
@@ -164,6 +169,10 @@ registerSidePanel({
             if (only.some((s) => quotes.get(s) === undefined)) setTimeout(() => void refresh(only), 2000); // symbol lists still loading
         }
         const timer = setInterval(() => void refresh(), REFRESH_MS);
+        changedElsewhere.add(() => {
+            render();
+            void refresh();
+        });
         let offMarket = (): void => {};
 
         // The panel mounts while the workspace is still being built: everything that reads the chart starts here.

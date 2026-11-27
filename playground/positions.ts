@@ -6,7 +6,7 @@
 import { registerRendererLayer, registerWidgetAction, type WidgetContext } from '../src/plugin';
 import { Dialog, createButton, createInput } from '../src/ui';
 import { toast } from '@luxalgo/vela-ui/toast';
-import { getSaved, setSaved } from './saved';
+import { getSaved, onSavedChange, setSaved } from './saved';
 import type { VelaWorkspace } from '../src/workspace';
 
 type Side = 'buy' | 'sell';
@@ -22,6 +22,7 @@ interface Position {
 
 const KEY = 'vela-play:positions';
 let positions: Position[] = load();
+onSavedChange(KEY, () => (positions = load())); // another page changed them
 const lastPrices = new Map<string, number>(); // symbol → its latest close, from the layer's last frame
 let symbolOf = (_canvas: HTMLCanvasElement): string | undefined => undefined;
 
