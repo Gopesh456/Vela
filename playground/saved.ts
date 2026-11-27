@@ -33,7 +33,9 @@ async function flush(): Promise<void> {
     try {
         while (pending.size > 0) {
             const [key, value] = pending.entries().next().value as [string, string | null];
-            const ok = await fetch('/__state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key, value }) }).then(
+            const body = JSON.stringify({ key, value });
+            // keepalive: the save a page makes as you leave it still lands. shortcut: browsers cap keepalive bodies at 64 KB, so a bigger one can still be lost on leaving.
+            const ok = await fetch('/__state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body, keepalive: body.length < 60_000 }).then(
                 (r) => r.ok,
                 () => false,
             );

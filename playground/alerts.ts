@@ -1,19 +1,26 @@
 // Price alerts: the bell on a horizontal line arms an alert at the line's price. When the price
 // crosses it: a notice on the chart, an alarm sound and a desktop notification. Alerts are saved
-// (saved.ts) and checked in the background for every symbol, on screen or not; the Price alerts
-// panel lists them. Moving the line moves its alert; deleting the line deletes it.
-import { registerDrawingAction, registerIcon, registerSidePanel } from '../src/plugin';
+// (saved.ts) and shared by the playground pages; each page checks all of them in the background,
+// on screen or not, and its Price alerts panel lists them. Moving the line moves its alert;
+// deleting the line deletes it.
+import { registerDrawingAction, registerSidePanel } from '../src/plugin';
 import { createButton } from '../src/ui';
 import type { VelaWorkspace } from '../src/workspace';
 import { toast } from '@luxalgo/vela-ui/toast';
 import { getSaved, setSaved } from './saved';
 import { CSS, fmtPrice } from './watchlist';
 
-/** `id` is the horizontal line's drawing id: the line holds the alert's price. */
+/** `id` is the horizontal line's drawing id in chart cell `cell` of page `page` (each chart
+ *  numbers its own drawings). `price` is the line's last known price: the level wherever the
+ *  line itself isn't (another page, a cell the layout put away). */
 interface Alert {
     id: string;
     symbol: string;
+    page: string;
+    cell: string;
+    price?: number;
 }
+const PAGE = location.pathname;
 
 const KEY = 'vela-play:alerts';
 // shortcut: prices are checked every 5 s, so a spike that crosses and returns within 5 s is missed; follow live bars to catch those.
@@ -23,7 +30,12 @@ let alerts = load();
 function load(): Alert[] {
     try {
         const v: unknown = JSON.parse(getSaved(KEY) ?? '[]');
-        return Array.isArray(v) ? (v.filter((a: Partial<Alert>) => typeof a?.id === 'string' && typeof a.symbol === 'string') as Alert[]) : [];
+        if (!Array.isArray(v)) return [];
+        return (v.filter((a: Partial<Alert>) => typeof a?.id === 'string' && typeof a.symbol === 'string') as Partial<Alert>[]).map((a) => ({
+            ...(a as Alert),
+            page: a.page ?? '/widget.html', // alerts saved before they had a page all came from the one-chart page
+            cell: a.cell ?? 'c1',
+        }));
     } catch {
         return [];
     }
@@ -37,12 +49,14 @@ function changed(): void {
 }
 
 let ws: VelaWorkspace | null = null;
-const lastPrice = new Map<string, number>(); // alert id → the price at the previous check
-const levelOf = (id: string): number | undefined => ws?.chart.drawings.all().find((d) => d.id === id)?.anchors[0]?.price;
+const lastPrice = new Map<Alert, number>(); // the price at the previous check
+const find = (cell: string, id: string): Alert | undefined => alerts.find((a) => a.page === PAGE && a.cell === cell && a.id === id);
+const levelOf = (a: Alert): number | undefined =>
+    (a.page === PAGE ? ws?.cell(a.cell)?.chart.drawings.all().find((d) => d.id === a.id)?.anchors[0]?.price : undefined) ?? a.price;
 
-function cancel(id: string): void {
-    alerts = alerts.filter((a) => a.id !== id);
-    lastPrice.delete(id);
+function cancel(a: Alert): void {
+    alerts = alerts.filter((x) => x !== a);
+    lastPrice.delete(a);
     changed();
 }
 
@@ -91,15 +105,18 @@ async function check(): Promise<void> {
     checking = true;
     try {
         const prices = new Map<string, Promise<number | undefined>>(); // one fetch per symbol
+        let moved = false;
         for (const a of [...alerts]) {
             if (!prices.has(a.symbol)) prices.set(a.symbol, priceOf(a.symbol).catch(() => undefined));
-            const [level, now] = [levelOf(a.id), await prices.get(a.symbol)];
+            const [level, now] = [levelOf(a), await prices.get(a.symbol)];
+            if (level !== a.price) [a.price, moved] = [level, true]; // the line moved: keep the level for the other pages
             if (level === undefined || now === undefined) continue;
-            const before = lastPrice.get(a.id);
-            lastPrice.set(a.id, now);
+            const before = lastPrice.get(a);
+            lastPrice.set(a, now);
             if (before !== undefined && before < level !== now < level) trigger(a, level, now);
         }
-        notify();
+        if (moved) changed();
+        else notify();
     } finally {
         checking = false;
     }
@@ -110,16 +127,25 @@ function trigger(a: Alert, level: number, now: number): void {
     ws?.toast(text, 'success', 15_000);
     alarm();
     if ('Notification' in window && Notification.permission === 'granted') new Notification('Vela price alert', { body: text });
-    cancel(a.id);
+    cancel(a);
 }
 
 /** Call once the workspace exists: re-arms the saved alerts and starts checking. */
 export function startAlerts(workspace: VelaWorkspace): void {
     ws = workspace;
-    void workspace.chart.ready().then(() => {
-        workspace.chart.on('drawing:removed', ({ id }) => {
-            if (alerts.some((a) => a.id === id)) cancel(id);
+    // Every chart cell, and the ones a later layout switch adds.
+    const watch = (cell: { id: string; chart: VelaWorkspace['chart'] }): void => {
+        cell.chart.on('drawing:removed', ({ id }) => {
+            const a = find(cell.id, id);
+            if (a) cancel(a);
         });
+    };
+    workspace.cells().forEach(watch);
+    workspace.on('cell:created', ({ id }) => {
+        const cell = workspace.cell(id);
+        if (cell) watch(cell);
+    });
+    void workspace.chart.ready().then(() => {
         void check();
         setInterval(() => void check(), CHECK_MS);
     });
@@ -132,8 +158,11 @@ registerDrawingAction({
     label: 'Price alert (click again to cancel)',
     when: (d) => d.type === 'hline',
     run: (ctx, d) => {
-        if (alerts.some((a) => a.id === d.id)) {
-            cancel(d.id);
+        const cell = ws?.cells().find((c) => c.chart === ctx.chart)?.id;
+        if (!cell) return;
+        const armed = find(cell, d.id);
+        if (armed) {
+            cancel(armed);
             ctx.toast('Price alert cancelled', 'info');
             return;
         }
@@ -145,7 +174,7 @@ registerDrawingAction({
             : Notification.permission === 'default'
               ? Notification.requestPermission()
               : Promise.resolve(Notification.permission);
-        alerts.push({ id: d.id, symbol: ctx.symbol });
+        alerts.push({ id: d.id, symbol: ctx.symbol, page: PAGE, cell, price: at });
         changed();
         void check(); // record the starting price now
         // Say so when the desktop notification can't come: the browser blocks it without telling anyone.
@@ -160,17 +189,12 @@ registerDrawingAction({
     },
 });
 
-// ── The Price alerts panel ──
-registerIcon(
-    'price-alerts',
-    '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.6 1.2M2.5 3.5l2-1.5M13.5 3.5l-2-1.5"/></svg>',
-);
-
+// ── The Price alerts panel: the topbar bell (the pages leave out the built-in one, see topbar.ts) ──
 registerSidePanel({
     id: 'dev.alerts',
     title: 'Price alerts',
-    icon: 'price-alerts',
-    order: 6,
+    icon: 'bell',
+    order: 4, // first of the panel buttons: where the built-in bell was
     width: 290,
     resizable: true,
     mount: (ctx, body) => {
@@ -195,8 +219,8 @@ registerSidePanel({
                 return;
             }
             for (const a of alerts) {
-                const level = levelOf(a.id);
-                const now = lastPrice.get(a.id);
+                const level = levelOf(a);
+                const now = lastPrice.get(a);
                 const row = document.createElement('div');
                 row.className = 'wl-row';
                 const open = document.createElement('button');
@@ -206,7 +230,7 @@ registerSidePanel({
                 open.append(
                     span('wl-sym', a.symbol),
                     span('wl-num', level === undefined ? '—' : fmtPrice(level)),
-                    span('wl-desc', now === undefined ? 'Waiting for the price…' : `Now ${fmtPrice(now)}`),
+                    span('wl-desc', level === undefined ? `Open ${a.page} once to load its level` : now === undefined ? 'Waiting for the price…' : `Now ${fmtPrice(now)}`),
                     span('wl-chg', away === null ? '' : `${Number(away) >= 0 ? '+' : ''}${away}% away`),
                 );
                 open.addEventListener('click', () => ctx.setSymbol(a.symbol));
@@ -216,7 +240,7 @@ registerSidePanel({
                     variant: 'ghost',
                     size: 'icon-xs',
                     className: 'wl-remove',
-                    onClick: () => cancel(a.id),
+                    onClick: () => cancel(a),
                 });
                 row.append(open, remove.el);
                 list.append(row);

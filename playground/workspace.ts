@@ -12,6 +12,12 @@ import { BinanceProvider } from "../src/data/providers/binance";
 import { DemoEngine } from "./demo-engine";
 import { playgroundStorage } from "./persistence";
 import { addSampleMarks } from "./marks";
+import { bindPositions } from "./positions"; // Buy / Sell: your trades on the chart, with live P&L
+import { startAlerts } from "./alerts"; // price alerts: the bell on lines, background checks, the Price alerts panel
+import { nseStocks, usStocks } from "./stocks";
+import "./pip"; // the picture-in-picture button
+import "./watchlist"; // the Watchlist side panel
+import { topbar } from "./topbar"; // the back button, and the bell as the Price alerts panel
 
 const ws = new VelaWorkspace("#workspace", {
   layout: "4",
@@ -27,7 +33,7 @@ const ws = new VelaWorkspace("#workspace", {
     sol: { symbol: "SOLUSDT", timeframe: "240" },
     bnb: { symbol: "BNBUSDT", timeframe: "D" },
   },
-  providers: { binance: () => new BinanceProvider() },
+  providers: { binance: () => new BinanceProvider(), nse: nseStocks, us: usStocks }, // stocks: Indian (NSE) and US, see stocks.ts
   engines: { demo: () => new DemoEngine() }, // ONE instance per cell (a worker engine would get a thread each)
   defaultLanguage: "demo", // scripts added without a `language` run on the engine above
   // No script manifest: the indicators dialog lists the built-in catalog only.
@@ -40,6 +46,7 @@ const ws = new VelaWorkspace("#workspace", {
   persist: true, // key 'vela-workspace' → 'vela-play:vela-workspace' in devtools
   storage: playgroundStorage(),
   settings: { hidden: ["advanced"] },
+  topbar,
 
   // ── The rest of the CHART options (every cell's DEFAULT), at their defaults ───────
   // bars: 500,                      // history depth per cell
@@ -114,6 +121,9 @@ ws.on("cell:created", ({ id }) => {
   const cell = ws.cell(id);
   if (cell) seedMarks(cell.chart);
 });
+
+bindPositions(ws);
+startAlerts(ws);
 
 // Handy for poking around from the browser console (and for the automated probes).
 (window as unknown as { __ws: VelaWorkspace }).__ws = ws;

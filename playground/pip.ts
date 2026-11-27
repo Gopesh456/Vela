@@ -33,7 +33,7 @@ function copyStyles(to: Document): void {
 }
 
 async function popOut(): Promise<void> {
-    const chart = document.getElementById('chart');
+    const chart = document.querySelector<HTMLElement>('#chart, #workspace'); // the one-chart page, or the multi-chart one
     if (!docPip || !chart) return;
     const win = await docPip.requestWindow({ width: 560, height: 360 });
     pip = win;

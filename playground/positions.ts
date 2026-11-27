@@ -22,8 +22,8 @@ interface Position {
 
 const KEY = 'vela-play:positions';
 let positions: Position[] = load();
-let lastPrice: number | undefined; // the shown symbol's latest close, from the layer's last frame
-let shownSymbol = (): string | undefined => undefined;
+const lastPrices = new Map<string, number>(); // symbol → its latest close, from the layer's last frame
+let symbolOf = (_canvas: HTMLCanvasElement): string | undefined => undefined;
 
 function load(): Position[] {
     try {
@@ -47,9 +47,9 @@ export function pnl(p: Pick<Position, 'side' | 'price' | 'amount'>, price: numbe
 console.assert(pnl({ side: 'buy', price: 100, amount: 1000 }, 110).value === 100 && pnl({ side: 'buy', price: 100, amount: 1000 }, 110).pct === 10, 'pnl buy');
 console.assert(pnl({ side: 'sell', price: 100, amount: 1000 }, 110).value === -100, 'pnl sell');
 
-/** Call once the workspace exists: the layer paints the positions of the symbol on screen. */
+/** Call once the workspace exists: each chart cell's layer paints the positions of that cell's symbol. */
 export function bindPositions(ws: VelaWorkspace): void {
-    shownSymbol = () => ws.chart.market.symbol;
+    symbolOf = (canvas) => ws.cells().find((c) => c.host.contains(canvas))?.chart.market.symbol;
 }
 
 const fmt = (n: number, digits = 2): string => n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -76,8 +76,6 @@ function removePosition(id: string): void {
     });
 }
 
-/** The × on each chart label, in plot coordinates (CSS px), from the last frame. */
-let closeBoxes: { id: string; x: number; y: number; w: number; h: number }[] = [];
 const CLOSE_W = 20;
 
 registerRendererLayer({
@@ -87,6 +85,8 @@ registerRendererLayer({
     create: () => {
         let canvas: HTMLCanvasElement | null = null;
         let clicks: HTMLElement | null = null;
+        /** The × on each label, in plot coordinates (CSS px), from the last frame. */
+        let closeBoxes: { id: string; x: number; y: number; w: number; h: number }[] = [];
         // A press on a label's × deletes that position. Caught on the way down, before the chart
         // reads it as a pan or a drawing click (this canvas itself lets pointer events through).
         const onPress = (e: PointerEvent): void => {
@@ -115,12 +115,14 @@ registerRendererLayer({
                 g.setTransform(dpr, 0, 0, dpr, 0, 0);
                 g.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
                 closeBoxes = [];
-                lastPrice = bars[bars.length - 1]?.close;
-                if (lastPrice === undefined) return;
+                const symbol = symbolOf(canvas);
+                const lastPrice = bars[bars.length - 1]?.close;
+                if (lastPrice === undefined || !symbol) return;
+                lastPrices.set(symbol, lastPrice);
                 g.font = `600 11px ${theme.fontFamily}`;
                 g.textBaseline = 'middle';
                 for (const p of positions) {
-                    if (p.symbol !== shownSymbol()) continue;
+                    if (p.symbol !== symbol) continue;
                     const y = Math.round(coords.priceToY(p.price, scale, bounds)) + 0.5;
                     g.strokeStyle = p.side === 'buy' ? theme.upColor : theme.downColor;
                     g.lineWidth = 1;
@@ -163,6 +165,7 @@ let dialog: Dialog | null = null;
 function openTrade(ctx: WidgetContext, side: Side): void {
     const symbol = ctx.chart.market.symbol;
     if (!symbol) return;
+    const lastPrice = lastPrices.get(symbol);
     const word = side === 'buy' ? 'Buy' : 'Sell';
     const priceIn = createInput({ id: 'dev-trade-price', placeholder: 'e.g. 60000' });
     const amountIn = createInput({ id: 'dev-trade-amount', placeholder: 'e.g. 1000' });

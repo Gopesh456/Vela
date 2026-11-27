@@ -24,6 +24,7 @@ import { startAlerts } from './alerts'; // price alerts: the bell on lines, back
 import { nseStocks, usStocks } from './stocks';
 import './pip'; // the picture-in-picture button
 import './watchlist'; // the Watchlist side panel
+import { topbar } from './topbar'; // the back button, and the bell as the Price alerts panel
 
 // The playground's CUSTOM persistence (shared with the workspace page): with `persist`
 // on, the shell saves and restores EVERYTHING through this adapter — prefs, renderer
@@ -39,6 +40,7 @@ const ws = new VelaWorkspace('#chart', {
     theme: 'dark',
     autofocus: true, // the chart IS the page — shortcuts work from the first keystroke
     persist: 'vela-widget', // → 'vela-play:vela-widget' in devtools (the page's historical key)
+    topbar,
     storage,
     providers: { binance: () => new BinanceProvider(), nse: nseStocks, us: usStocks }, // stocks: Indian (NSE) and US, see stocks.ts
     engines: { demo: () => new DemoEngine() }, // swap for `pine: () => new PineWorkerEngine()` (see the header)
