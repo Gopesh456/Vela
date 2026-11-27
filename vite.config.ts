@@ -23,6 +23,13 @@ export default defineConfig({
             ...relay('/proxy/nasdaq', 'https://www.nasdaqtrader.com'),
         },
     },
+    // `vite build`: the pages, bundled for the Android app (scripts/build-android.ps1). es2022 for saved.ts's top-level await.
+    build: {
+        outDir: '../android/assets/www',
+        emptyOutDir: true,
+        target: 'es2022',
+        rollupOptions: { input: ['playground/index.html', 'playground/widget.html', 'playground/workspace.html'] },
+    },
     // playgroundState: what the playground saves, kept in a file (outside `root`, so writing it reloads nothing).
     plugins: [velaUiSource(), playgroundState(new URL('.playground-state.json', import.meta.url))],
 });

@@ -11,7 +11,8 @@ function Test-Server {
 
 if (-not (Test-Server)) {
     # -NoNewWindow: the server shares this script's windowless console instead of opening its own.
-    Start-Process npm.cmd -ArgumentList 'run', 'playground' -WorkingDirectory $root -NoNewWindow
+    # --host: it also answers on the Wi-Fi network, where the Android app syncs with it (android/).
+    Start-Process npm.cmd -ArgumentList 'run', 'playground', '--', '--host' -WorkingDirectory $root -NoNewWindow
     for ($i = 0; $i -lt 120 -and -not (Test-Server); $i++) { Start-Sleep -Milliseconds 500 }
 }
 

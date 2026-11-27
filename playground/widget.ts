@@ -20,6 +20,7 @@ import { addSampleMarks } from './marks';
 import { DemoEngine, DEMO_SCRIPTS } from './demo-engine';
 import { playgroundStorage } from './persistence';
 import { bindPositions } from './positions';
+import { bindSymbolCharts } from './symbol-charts'; // each symbol's lines and indicators, shared by every page and device
 import { startAlerts } from './alerts'; // price alerts: the bell on lines, background checks, the Price alerts panel
 import { nseStocks, usStocks } from './stocks';
 import './pip'; // the picture-in-picture button
@@ -95,6 +96,7 @@ const ws = new VelaWorkspace('#chart', {
 });
 
 void ws.chart.ready().then(() => console.log('[vela-dev] chart ready'));
+bindSymbolCharts(ws);
 bindPositions(ws);
 startAlerts(ws);
 

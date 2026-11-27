@@ -13,6 +13,7 @@ import { DemoEngine } from "./demo-engine";
 import { playgroundStorage } from "./persistence";
 import { addSampleMarks } from "./marks";
 import { bindPositions } from "./positions"; // Buy / Sell: your trades on the chart, with live P&L
+import { bindSymbolCharts } from "./symbol-charts"; // each symbol's lines and indicators, shared by every page and device
 import { startAlerts } from "./alerts"; // price alerts: the bell on lines, background checks, the Price alerts panel
 import { nseStocks, usStocks } from "./stocks";
 import "./pip"; // the picture-in-picture button
@@ -122,6 +123,7 @@ ws.on("cell:created", ({ id }) => {
   if (cell) seedMarks(cell.chart);
 });
 
+bindSymbolCharts(ws);
 bindPositions(ws);
 startAlerts(ws);
 

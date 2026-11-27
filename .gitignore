@@ -7,4 +7,7 @@ packages/vela-ui/registry/
 .env.local
 .DS_Store
 .playground-state.json
+# The Android app's build output, and the pages vite builds into it (scripts/build-android.ps1).
+android/build/
+android/assets/www/
 .playground-state.json.tmp

@@ -13,6 +13,8 @@ interface DocumentPictureInPicture {
     requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
 }
 const docPip = (window as unknown as { documentPictureInPicture?: DocumentPictureInPicture }).documentPictureInPicture;
+/** The Android app's own picture-in-picture (android/): the whole app shrinks into a corner window. */
+const nativePip = (globalThis as { VelaNative?: { pip?(): void } }).VelaNative?.pip;
 let pip: Window | null = null;
 
 /** The page's styles, as text the pop-out window can take (the chart and the kit add theirs to <head>). */
@@ -95,6 +97,7 @@ registerWidgetAction({
     iconOnly: true,
     run: (ctx) => {
         if (pip) pip.close();
+        else if (nativePip) (globalThis as unknown as { VelaNative: { pip(): void } }).VelaNative.pip();
         else if (!docPip) ctx.toast('Picture in picture needs Chrome or Edge', 'error');
         else void popOut();
     },
