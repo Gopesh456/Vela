@@ -7,8 +7,20 @@ import { velaUiSource } from './scripts/vela-ui-source.mjs';
  * to configure — Vela ships no scripting engine, so the page carries its own tiny demo engine
  * (playground/demo-engine.ts) and needs no bundler plumbing for it.
  */
+/** Relay `prefix/*` to `target/*` — for sources that refuse direct browser calls (no CORS headers). */
+const relay = (prefix: string, target: string) => ({ [prefix]: { target, changeOrigin: true, rewrite: (path: string) => path.slice(prefix.length) } });
+
 export default defineConfig({
     root: 'playground',
-    server: { port: 5190, strictPort: true },
+    server: {
+        port: 5190,
+        strictPort: true,
+        // The playground's stock data (playground/stocks.ts).
+        proxy: {
+            ...relay('/proxy/yahoo', 'https://query1.finance.yahoo.com'),
+            ...relay('/proxy/nse', 'https://nsearchives.nseindia.com'),
+            ...relay('/proxy/nasdaq', 'https://www.nasdaqtrader.com'),
+        },
+    },
     plugins: [velaUiSource()],
 });

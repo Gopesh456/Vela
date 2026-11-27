@@ -19,6 +19,8 @@ import { BinanceProvider } from '../src/data/providers/binance';
 import { addSampleMarks } from './marks';
 import { DemoEngine, DEMO_SCRIPTS } from './demo-engine';
 import { playgroundStorage } from './persistence';
+import { bindPositions } from './positions';
+import { nseStocks, usStocks } from './stocks';
 
 // The playground's CUSTOM persistence (shared with the workspace page): with `persist`
 // on, the shell saves and restores EVERYTHING through this adapter — prefs, renderer
@@ -35,7 +37,7 @@ const ws = new VelaWorkspace('#chart', {
     autofocus: true, // the chart IS the page — shortcuts work from the first keystroke
     persist: 'vela-widget', // → 'vela-play:vela-widget' in devtools (the page's historical key)
     storage,
-    providers: { binance: () => new BinanceProvider() },
+    providers: { binance: () => new BinanceProvider(), nse: nseStocks, us: usStocks }, // stocks: Indian (NSE) and US, see stocks.ts
     engines: { demo: () => new DemoEngine() }, // swap for `pine: () => new PineWorkerEngine()` (see the header)
     defaultLanguage: 'demo', // scripts added without a `language` run on the engine above
     // No script manifest: the indicators dialog lists the built-in catalog only. Scripts
@@ -88,6 +90,7 @@ const ws = new VelaWorkspace('#chart', {
 });
 
 void ws.chart.ready().then(() => console.log('[vela-dev] chart ready'));
+bindPositions(ws);
 
 // Sample timeline marks (chart.marks) — see marks.ts: a cluster, a fanning stack, a custom
 // icon with details loaded on click… spread over the visible range once the chart painted.
@@ -141,6 +144,75 @@ registerDrawingAction({
     label: 'Show drawing info',
     when: (d) => d.type === 'hline' || d.type === 'trendline' || d.type === 'hray',
     run: (ctx, d) => ctx.toast(`${d.type} at ${d.anchors[0]?.price.toFixed(2) ?? '?'}`, 'info'),
+});
+
+// ── Price alert: a bell on horizontal lines. Click it to arm the alert, click again to cancel.
+// When the price crosses the line: an on-chart notice, a beep and a desktop notification. ──
+// shortcut: alerts live in this tab only (lost on reload, silent once the tab closes); store them for real use.
+const priceAlerts = new Map<string, () => void>(); // drawing id → cancel
+let audio: AudioContext | undefined;
+
+function beep(): void {
+    if (!audio) return;
+    for (const at of [0, 0.3, 0.6]) {
+        const t = audio.currentTime + at;
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.3, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(t);
+        osc.stop(t + 0.25);
+    }
+}
+
+registerDrawingAction({
+    id: 'dev.price-alert',
+    icon: 'bell',
+    label: 'Price alert (click again to cancel)',
+    when: (d) => d.type === 'hline',
+    run: (ctx, d) => {
+        const cancel = priceAlerts.get(d.id);
+        if (cancel) {
+            cancel();
+            ctx.toast('Price alert cancelled', 'info');
+            return;
+        }
+        const at = d.anchors[0]?.price;
+        if (at === undefined) return;
+        // Sound and notification permission need this click: browsers refuse both from a price tick.
+        audio ??= new AudioContext();
+        void audio.resume();
+        if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission();
+
+        const chart = ctx.chart;
+        const symbol = ctx.symbol;
+        let last: number | undefined;
+        const unsubscribe = chart.on('bar', (bar) => {
+            const line = chart.drawings.all().find((x) => x.id === d.id);
+            if (!line) return stop(); // line deleted: the alert goes with it
+            if (ctx.symbol !== symbol) {
+                last = undefined; // another symbol is on screen; resume when it comes back
+                return;
+            }
+            const level = line.anchors[0]?.price ?? at; // read live, so dragging the line moves the alert
+            if (last !== undefined && last < level !== bar.close < level) {
+                const text = `${symbol} crossed ${bar.close > level ? 'above' : 'below'} ${level.toPrecision(7)} (now ${bar.close})`;
+                ws.toast(text, 'success', 15_000);
+                beep();
+                if ('Notification' in window && Notification.permission === 'granted') new Notification('Vela price alert', { body: text });
+                stop();
+            }
+            last = bar.close;
+        });
+        const stop = (): void => {
+            unsubscribe();
+            priceAlerts.delete(d.id);
+        };
+        priceAlerts.set(d.id, stop);
+        ctx.toast(`Price alert set at ${at.toPrecision(7)}`, 'success');
+    },
 });
 
 // ── "Code" topbar entry — paste a script, Run it, injected on success (SDK showcase:
